@@ -3,9 +3,6 @@
 #include <util/delay.h>
 #include <avr/interrupt.h>
 
-#define CTC_MATCH_OVERFLOW ((F_CPU / 1000) / 8)
-#include <util/atomic.h>
-
 #include <system/serial.h>
 #include <system/timer.h>
 

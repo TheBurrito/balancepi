@@ -2,4 +2,4 @@
 
 all: util.a
 
-util.a: circularbuffer.o pid.o
+util.a: circularbuffer.o pid.o odom.o
