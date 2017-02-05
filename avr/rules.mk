@@ -39,20 +39,3 @@ deps=$(wildcard $(BUILD_DIR)/*.d)
 
 %.a:
 	$(ar)
-
-#these are special rules to compile the tools used by this build system:
-#note that for the build tools there is a recursive call to their makefile
-#since the main project may be cross-compiled but we need the tools compiled
-#for the current machine
-
-#distclean adds the host generated build tools to the cleaning process
-.PHONY: distclean
-distclean: realclean
-	@$(MAKE) -s -f buildtools/buildtools.mk distclean
-
-#fixdeps modifies the gcc/g++ generated dependency files to work with this
-#makefile build system. This is only used for C/C++ sources. when generating
-#object files.
-all: buildtools/bin/fixdeps
-buildtools/bin/fixdeps:
-	@$(MAKE) -s -f buildtools/buildtools.mk buildtools/bin/fixdeps

@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define MOTOR_MAX 0x7fff
+#define MOTOR_MAX 0x00ff
 
 void initMotors();
 void driveA(int val);
