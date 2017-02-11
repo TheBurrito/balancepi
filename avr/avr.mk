@@ -17,7 +17,7 @@ AVRDUDE_PORT= usb
 
 #These flags override the normal flags and ensure a properly compile AVR hex
 CXXFLAGS= -g -Os -Wall -fno-exceptions -ffunction-sections -fdata-sections -MMD -mmcu=$(AVR_MCU) -D F_CPU=$(AVR_FCPU)
-CFLAGS= -Os -Wall -fno-exceptions -ffunction-sections -fdata-sections -MMD -mmcu=$(AVR_MCU) -D F_CPU=$(AVR_FCPU)
+CFLAGS= -g -Os -Wall -fno-exceptions -ffunction-sections -fdata-sections -MMD -mmcu=$(AVR_MCU) -D F_CPU=$(AVR_FCPU)
 LDFLAGS= -Os -Wl,--gc-sections,--relax -mmcu=$(AVR_MCU) -lm
 HEXFLAGS= -R .eeprom -O ihex
 

@@ -4,5 +4,6 @@
 void initTimer();
 
 unsigned long millis();
+unsigned long micros();
 
 #endif //TIMER_H_

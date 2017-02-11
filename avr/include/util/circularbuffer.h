@@ -4,18 +4,24 @@
 
 #include <stdint.h>
 
-#define CREATE_BUFFER() {{0}, 0, 0}
-
-typedef struct {
+class CircularBuffer {
+public:
+    CircularBuffer(bool lossy = true);
+    ~CircularBuffer();
+    
+    bool isFull();
+    bool isEmpty();
+    uint8_t count();
+    
+    void put(char c);
+    char get();
+    
+private:
     char _buf[256];
     uint8_t _head;
     uint8_t _tail;
-} CircularBuffer;
-
-void cb_put(CircularBuffer *buf, char c);
-char cb_get(CircularBuffer *buf);
-
-uint8_t cb_isFull(CircularBuffer *buf);
-uint8_t cb_isEmpty(CircularBuffer *buf);
+    
+    bool _lossy;
+};
 
 #endif //CIRCULARBUFFER_H_

@@ -3,28 +3,46 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
-static int uart_putchar(char c, FILE *stream);
-static int uart_getchar(FILE *stream);
+//#include <stdint.h>
 
-CircularBuffer _rx = CREATE_BUFFER();
-CircularBuffer _tx = CREATE_BUFFER();
+CircularBuffer _rx(true);
+CircularBuffer _tx(true);
 
 ISR(USART_RX_vect) {
-    cb_put(&_rx, UDR0);
+    _rx.put(UDR0);
 }
 
 ISR(USART_UDRE_vect) {
-    if (cb_isEmpty(&_tx)) {
+    if (_tx.isEmpty()) {
         UCSR0B &= ~(1<<UDRIE0);
     } else {
-        UDR0 = cb_get(&_tx);
+        UDR0 = _tx.get();
     }
 }
 
-static FILE _uartStream = FDEV_SETUP_STREAM(uart_putchar, uart_getchar, _FDEV_SETUP_RW);
+static int uart_putchar(char c, FILE *stream) {
+    if (c == '\n')
+        uart_putchar('\r', stream);
+    
+    while (_tx.isFull());
+    
+    _tx.put(c);
+    
+    UCSR0B |= (1<<UDRIE0);
+    
+    return 0;
+}
+
+static int uart_getchar(FILE *stream) {
+    while (_rx.isEmpty());
+    
+    return _rx.get();
+}
+
+static FILE *_uartStream;
 
 void initSerial(long baud) {
-    stdin = stdout = &_uartStream;
+    _uartStream = fdevopen(uart_putchar, uart_getchar);
     
     uint16_t baud_setting = (F_CPU / 4 / baud - 1) / 2;
     UCSR0A = 1 << U2X0;
@@ -49,23 +67,4 @@ void initSerial(long baud) {
     UCSR0B |= (1<<TXEN0);
     UCSR0B |= (1<<RXCIE0);
     UCSR0B &= ~(1<<UDRIE0);
-}
-
-static int uart_putchar(char c, FILE *stream) {
-    if (c == '\n')
-        uart_putchar('\r', stream);
-    
-    while (cb_isFull(&_tx));
-    
-    cb_put(&_tx, c);
-    
-    UCSR0B |= (1<<UDRIE0);
-    
-    return 0;
-}
-
-static int uart_getchar(FILE *stream) {
-    while (cb_isEmpty(&_rx));
-    
-    return cb_get(&_rx);
 }

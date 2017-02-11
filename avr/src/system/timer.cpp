@@ -41,8 +41,7 @@ ISR(TIMER0_OVF_vect) {
 	timer0_overflow_count++;
 }
 
-unsigned long millis()
-{
+unsigned long millis() {
 	unsigned long m;
 	uint8_t oldSREG = SREG;
 
@@ -53,6 +52,10 @@ unsigned long millis()
 	SREG = oldSREG;
 
 	return m;
+}
+
+unsigned long micros() {
+    return (millis() * 1000) + (TCNT0 * 4) ;
 }
 
 void initTimer() {

@@ -1,4 +1,4 @@
-#include <util/odom.h>
+#include <base/odom.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <math.h>
@@ -91,6 +91,13 @@ void setPose(float x, float y, float a) {
     _x = x;
     _y = y;
     _a = a;
+}
+
+void resetPosition(float *x, float *y) {
+    if (x) *x = _x;
+    if (y) *y = _y;
+    
+    _x = _y = 0;
 }
 
 void getWheelVel(float *left, float *right, float dt) {
