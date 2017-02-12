@@ -1,5 +1,5 @@
 -include ../../common.mk
 
-all: imu.a
+#all: imu.a
 
-imu.a: MPU9250.o quaternionFilters.o
+#imu.a: MPU9250.o quaternionFilters.o

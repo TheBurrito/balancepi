@@ -3,8 +3,293 @@
 //from AVR Libc, TWI interface status defines
 #include <util/twi.h>
 
+#include <avr/io.h>
 #include <avr/interrupt.h>
 
+#define STATE_IDLE 0x00
+#define STATE_MT   0x01
+#define STATE_MR   0x02
+#define STATE_ST   0x03
+#define STATE_SR   0x04
+
+//this array buffers single byte writes with a second byte for a register
+uint8_t __buf[2];
+
+//The predefined controller interface
+I2C i2c;
+
+ISR(TWI_vect) {
+    i2c._interrupt(TW_STATUS);
+}
+
+void I2C::start() {
+    TWCR = (1<<TWINT)|(1<<TWSTA)|(1<<TWEN)|((_twie ? 1 : 0)<<TWIE);
+}
+
+void I2C::stop() {
+    TWCR = (1<<TWINT)|(1<<TWSTO)|(1<<TWEN)|((_twie ? 1 : 0)<<TWIE);
+}
+
+void I2C::next(bool ack) {    
+    TWCR = (1<<TWINT)|(1<<TWEN)|((ack ? 1 : 0)<<TWEA)|((_twie ? 1 : 0)<<TWIE);
+}
+
+uint8_t I2C::wait() {
+    while ((TWCR & (1<<TWINT)) == 0);
+    return TW_STATUS;
+}
+
+I2C::I2C() {
+    _data = 0;
+    _data_n = 0;
+    _register = false;
+    _reg_addr = 0;
+    _sendStop = true;
+    _inCallback = false;
+    _callback = 0;
+    _twie = false;
+    _state = STATE_IDLE;
+}
+
+void I2C::initMaster(unsigned long rate) {
+    //rate = F_CPU / (16 + 2(TWBR) * Prescale)
+    //scaler = (F_CPU / (2 * Rate)) - 8 assuming prescale of 1
+    
+    //automatically determine prescale value to be as small as possible while
+    //fitting the bit rate divider into 8 bits
+    int bitRate = F_CPU / (2 * rate) - 8;
+    
+    uint8_t prescale = 0;
+    
+    while (bitRate > 255) {
+        prescale++;
+        bitRate /= 4;
+        
+        if (prescale > 3) {
+            //error case, can't handle that large of a rate
+            //for now do nothing
+        }
+    }
+    
+    TWSR = prescale & 0x3;
+    TWBR = (uint8_t)bitRate;
+    
+    TWCR = (1<<TWEN); // enable the TWI interface
+}
+
+uint8_t I2C::writen(uint8_t address, uint8_t *data, uint8_t n, bool sendStop) {
+    //handle a few error cases to prevent invalid bus states or deadlocks
+    if (_inCallback) {
+        return I2C_NOBLOCK;
+    } else if (_twie) {
+        return I2C_BUSY;
+    }
+    
+    //send start condition on TWI controller
+    //controller waits for bus to be free
+    start();
+    
+    //success is TW_START
+    switch (wait()) {
+        case TW_BUS_ERROR:
+            if (sendStop) stop();
+            return I2C_BUSERROR;
+    }
+    
+    //set slave address and write flag
+    TWDR = (address<<1) | TW_WRITE;
+    
+    //tells the controller to actually write the address to the bus
+    next();
+    
+    //success is TW_MT_SLA_ACK
+    switch (wait()) {
+        case TW_BUS_ERROR:
+            if (sendStop) stop();
+            return I2C_BUSERROR;
+        
+        case TW_MT_SLA_NACK:
+            if (sendStop) stop();
+            return I2C_ADDRNACK;
+    }
+    
+    while (n) {
+        if (_register) {
+            _register = false;
+            TWDR = _reg_addr;           
+        } else {
+            TWDR = *data;           
+            n--;
+            if (n) data++;
+        }
+        
+        next();
+        
+        //success is TW_MT_DATA_ACK
+        switch(wait()) {
+            case TW_BUS_ERROR:
+                if (sendStop) stop();
+                return I2C_BUSERROR;
+                
+            case TW_MT_DATA_NACK:
+                if (sendStop) stop();
+                return I2C_DATANACK;
+        }
+    }
+    
+    if (sendStop) stop();
+    
+    return I2C_SUCCESS;
+}
+
+uint8_t I2C::write(uint8_t address, uint8_t data, bool sendStop) {
+    __buf[0] = data;
+    return writen(address, __buf, 1, sendStop);
+}
+
+uint8_t I2C::write(uint8_t address, uint8_t reg, uint8_t data, bool sendStop) {
+    _reg_addr = reg;
+    _register = true;
+    __buf[0] = data;
+    return writen(address, __buf, 1, sendStop);
+}
+
+uint8_t I2C::writen(uint8_t address, uint8_t reg, uint8_t *data, uint8_t n, bool sendStop) {
+    _reg_addr = reg;
+    _register = true;
+    return writen(address, data, n, sendStop);
+}
+
+uint8_t I2C::readn(uint8_t address, uint8_t *data, uint8_t n, bool sendStop) {
+    //handle a few error cases to prevent invalid bus states or deadlocks
+    if (_inCallback) {
+        return I2C_NOBLOCK;
+    } else if (_twie) {
+        return I2C_BUSY;
+    }
+    
+    start();
+    
+    //success is TW_START
+    switch (wait()) {
+        case TW_BUS_ERROR:
+            if (sendStop) stop();
+            return I2C_BUSERROR;
+    }
+    
+    //set slave address and read flag
+    TWDR = (address<<1) | TW_READ;
+    
+    //tells the controller to actually write the address to the bus
+    next();
+    
+    //success is TW_MR_SLA_ACK
+    switch (wait()) {
+        case TW_BUS_ERROR:
+            if (sendStop) stop();
+            return I2C_BUSERROR;
+            
+        case TW_MR_SLA_NACK:
+            if (sendStop) stop();
+            return I2C_BUSERROR;
+    }
+    
+    //addressed slave responded, just carry on with ack as well
+    next(true);
+    
+    while (n) {        
+        switch (wait()) {
+            case TW_BUS_ERROR:
+                if (sendStop) stop();
+                return I2C_BUSERROR;
+            
+            case TW_MR_DATA_NACK:
+                if (sendStop) stop();
+                return I2C_DATANACK;
+        }
+        
+        *data = TWDR;
+        n--;
+        if (n) {
+            data++;
+        }
+        
+        next(n > 0);
+    }
+    
+    //success is TW_MR_DATA_NACK
+    switch(wait()) {
+        case TW_BUS_ERROR:
+            if (sendStop) stop();
+            return I2C_BUSERROR;
+    }
+    
+    if (sendStop) stop();
+    return I2C_SUCCESS;
+}
+
+uint8_t I2C::read(uint8_t address, uint8_t &data, bool sendStop) {
+    return readn(address, &data, 1, sendStop);
+}
+
+uint8_t I2C::read(uint8_t address, uint8_t reg, uint8_t &data, bool sendStop) {
+    //first use master transmit mode to send register to read from
+    uint8_t status = write(address, reg, false);
+    
+    if (status == I2C_SUCCESS) {
+        status = readn(address, &data, 1, sendStop);
+    }
+    
+    return status;
+}
+
+uint8_t I2C::readn(uint8_t address, uint8_t reg, uint8_t *data, uint8_t n, bool sendStop) {
+    //first use master transmit mode to send register to read from
+    uint8_t status = write(address, reg, false);
+    
+    if (status == I2C_SUCCESS) {
+        status = readn(address, data, n, sendStop);
+    }
+    
+    return status;
+}
+
+uint8_t I2C::iwritecb(uint8_t address, uint8_t *data, uint8_t n, i2c_complete cb) {
+    return I2C_UNKNOWN;
+}
+
+uint8_t I2C::iwritecb(uint8_t address, uint8_t data, i2c_complete cb) {
+    return I2C_UNKNOWN;
+}
+
+uint8_t I2C::iwritecb(uint8_t address, uint8_t reg, uint8_t data, i2c_complete cb) {
+    return I2C_UNKNOWN;
+}
+
+uint8_t I2C::iwritecb(uint8_t address, uint8_t reg, uint8_t *data, uint8_t n, i2c_complete cb) {
+    return I2C_UNKNOWN;
+}
+
+uint8_t I2C::ireadcb(uint8_t address, uint8_t &data, i2c_complete cb) {
+    return I2C_UNKNOWN;
+}
+
+uint8_t I2C::ireadcb(uint8_t address, uint8_t *data, uint8_t n, i2c_complete cb) {
+    return I2C_UNKNOWN;
+}
+
+uint8_t I2C::ireadcb(uint8_t address, uint8_t reg, uint8_t &data, i2c_complete cb) {
+    return I2C_UNKNOWN;
+}
+
+uint8_t I2C::ireadcb(uint8_t address, uint8_t reg, uint8_t *data, uint8_t n, i2c_complete cb) {
+    return I2C_UNKNOWN;
+}
+
+void I2C::_interrupt(uint8_t _twsr) {
+}
+
+/*
 //internal defines used by this library, some of these will need to move
 //to header file for status responses
 
@@ -46,6 +331,9 @@ volatile uint8_t _status;
 
 volatile uint8_t _address;
 
+volatile bool _register = false;
+volatile uint8_t _reg_addr;
+
 void complete(uint8_t status);
 
 ISR(TWI_vect) {    
@@ -67,10 +355,15 @@ ISR(TWI_vect) {
             
         case TW_MT_SLA_ACK:
             //slave has been addressed, send data byte
-            TWDR = *_data_ptr;
-            _data_n--;
-            
-            if (_data_n) _data_ptr++;
+            if (_register) {
+                _register = false;
+                TWDR = _reg_addr;
+            } else {
+                TWDR = *_data_ptr;
+                _data_n--;
+                
+                if (_data_n) _data_ptr++;
+            }
             
             I2C_CONTINUE;
             break;
@@ -109,15 +402,21 @@ ISR(TWI_vect) {
             break;
 
         case TW_MR_DATA_ACK:
-            *_data_ptr = TWDR;
-            
-            _data_n--;
-            
-            if (_data_n) {
-                _data_ptr++;
+            if (_register) {
+                _register = false;
+                TWDR = _reg_addr;
                 I2C_ACK;
             } else {
-                I2C_NACK;
+                *_data_ptr = TWDR;
+                
+                _data_n--;
+                
+                if (_data_n) {
+                    _data_ptr++;
+                    I2C_ACK;
+                } else {
+                    I2C_NACK;
+                }
             }
             break;
 
@@ -256,6 +555,14 @@ uint8_t i2c_write(uint8_t address, uint8_t data, i2c_complete_callback callback)
     return i2c_write(address, &_write1, 1, callback);
 }
 
+uint8_t i2c_write_register(uint8_t address, uint8_t reg_addr, uint8_t val, i2c_complete_callback callback) {
+    _write1 = val;
+    _reg_addr = reg_addr;
+    _register = true;
+    
+    return i2c_write(address, &_write1, 1, callback);
+}
+
 uint8_t i2c_read(uint8_t address, uint8_t *buf, int n, i2c_complete_callback callback) {
     _address = address;
     _data_ptr = buf;
@@ -283,3 +590,4 @@ uint8_t i2c_read(uint8_t address, uint8_t *buf, int n, i2c_complete_callback cal
 uint8_t i2c_read(uint8_t address, uint8_t *data, i2c_complete_callback callback) {
     return i2c_read(address, data, 1, callback);
 }
+*/
